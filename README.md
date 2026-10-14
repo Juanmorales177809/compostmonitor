@@ -1,73 +1,87 @@
-# React + TypeScript + Vite
+# CompostMonitor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+CompostMonitor es un dashboard web para monitorear las condiciones ambientales de un dispositivo IoT. La aplicación muestra las lecturas de seis sensores de temperatura, permite consultar su histórico y descargar reportes mensuales en Excel.
 
-Currently, two official plugins are available:
+## Funcionalidades
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Visualización de la lectura actual de seis sensores de temperatura.
+- Gauges individuales para cada sensor.
+- Gráfico histórico con rangos de 1 hora, 6 horas, 12 horas, 24 horas, 2 días, 7 días y 30 días.
+- Activación o desactivación de sensores en el gráfico.
+- Sincronización manual de la lectura actual.
+- Actualización automática de los datos cada cinco minutos.
+- Descarga de reportes mensuales en formato Excel.
+- Configuración visual de alertas por correo electrónico o Telegram.
 
-## React Compiler
+## Tecnologías
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19
+- TypeScript
+- Vite
+- TanStack React Query
+- Recharts
+- React D3 Speedometer
+- Lucide React
+- Nginx para producción
 
-## Expanding the ESLint configuration
+## Dispositivo y API
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+El dashboard está configurado actualmente para el dispositivo `AF-EX01`.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Endpoints utilizados:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- `GET /api/v1/devices/AF-EX01/uplinks/latest`: obtiene la última lectura.
+- `GET /api/v1/devices/AF-EX01/uplinks`: obtiene las lecturas históricas.
+- `GET /api/v1/devices/report`: genera un reporte mensual en Excel.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+El reporte se solicita con resolución diaria mediante `resolution=daily`.
+
+## Requisitos
+
+- Node.js 22 o superior.
+- npm.
+- Un backend disponible para los endpoints `/api/`.
+
+## Desarrollo local
+
+Instalar dependencias:
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Iniciar el servidor de desarrollo:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+El proyecto quedará disponible en la URL que indique Vite, normalmente `http://localhost:5173`.
+
+## Scripts disponibles
+
+```bash
+npm run dev      # inicia el servidor de desarrollo
+npm run build    # comprueba tipos y genera la compilación de producción
+npm run lint     # ejecuta ESLint
+npm run preview  # sirve localmente la compilación generada
+```
+
+## Despliegue con Docker
+
+Construir y ejecutar la aplicación:
+
+```bash
+docker compose up --build -d
+```
+
+La aplicación se publica en el puerto `5173` del host. Nginx sirve los archivos estáticos y reenvía las peticiones `/api/` al backend configurado en `nginx.conf`.
+
+## Estructura principal
+
+- `src/main.tsx`: punto de entrada de React y configuración de React Query.
+- `src/App.tsx`: dashboard, consultas de datos, reportes y configuración de alertas.
+- `src/App.css`: estilos del dashboard y comportamiento responsive.
+- `src/index.css`: estilos globales.
+- `Dockerfile`: construcción de la imagen de producción.
+- `nginx.conf`: servidor web y proxy para la API.
