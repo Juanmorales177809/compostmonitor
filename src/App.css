@@ -100,6 +100,12 @@
 .topbar {
   gap: 16px;
   margin-bottom: 24px;
+  align-items: flex-start;
+}
+
+.topbar-info {
+  min-width: 0;
+  flex: 1;
 }
 
 .title-logo-wrap {
@@ -180,17 +186,15 @@
   display: none;
 }
 
-.topbar-actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  margin-left: auto;
+.mobile-bottom-nav {
+  display: none;
 }
 
 .report-controls {
   display: flex;
   align-items: end;
   gap: 12px;
+  margin-top: 16px;
 }
 
 .report-select {
@@ -213,18 +217,6 @@
   background: #ffffff;
   color: #102D69;
   font: inherit;
-}
-
-.secondary-button {
-  background: #ffffff;
-  color: #102D69;
-  border: 1px solid #56ACDE;
-}
-
-.secondary-button:hover:not(:disabled) {
-  background: #102D69;
-  color: #ffffff;
-  border-color: #102D69;
 }
 
 .report-button {
@@ -351,6 +343,12 @@
 .alert-field select:focus {
   outline: 2px solid rgba(86, 172, 222, 0.28);
   outline-offset: 1px;
+}
+
+.form-error {
+  display: block;
+  color: #C14894;
+  font-weight: 700;
 }
 
 .alert-threshold-grid {
@@ -555,7 +553,57 @@
   }
 
   .menu-button {
-    display: inline-flex;
+    display: none;
+  }
+
+  .main-panel {
+    padding-bottom: 140px;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    min-height: 76px;
+    background: #ffffff;
+    border-top: 1px solid #56ACDE;
+    box-shadow: 0 -8px 24px rgba(16, 45, 105, 0.1);
+  }
+
+  .mobile-nav-item {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 2px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #102D69;
+    font: inherit;
+    font-size: 10px;
+    line-height: 1.1;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .mobile-nav-item span {
+    overflow: hidden;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-nav-item.active,
+  .mobile-nav-item:hover {
+    background: rgba(193, 72, 148, 0.12);
+    color: #C14894;
   }
 
   .gauges-grid {
@@ -577,11 +625,8 @@
     flex: 1;
   }
 
-  .topbar-actions {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    margin-left: 0;
+  .topbar-info {
+    flex-basis: 100%;
   }
 
   .title-logo {
@@ -608,8 +653,7 @@
     grid-column: 1 / -1;
   }
 
-  .report-button,
-  .secondary-button {
+  .report-button {
     width: 100%;
     justify-content: center;
     margin-left: 0;

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactSpeedometer from 'react-d3-speedometer'
 import { Activity, Bell, ChartNoAxesCombined, FileSpreadsheet, Mail, Menu, RefreshCw, Send, Settings, Thermometer, X } from 'lucide-react'
 import {
@@ -20,16 +20,22 @@ type AlertChannel = 'email' | 'telegram'
 
 type ReportYear = 2024 | 2025 | 2026 | 2027
 
+type DeviceSetting = {
+  dev_eui: string
+  device_name: string
+}
+
 type LatestUplink = {
   time: string
   application_id: string
   application_name: string
   device_name: string
   dev_eui: string
-  fields: Record<SensorKey, number>
+  fields: Record<string, number | null>
 }
 
 type HistoricalUplinksResponse = {
+  dev_eui: string
   device_name: string
   count: number
   uplinks: LatestUplink[]
@@ -120,9 +126,11 @@ const sensorConfig: Array<{
   },
 ]
 
-const latestUrl = '/api/v1/devices/AF-EX01/uplinks/latest'
 const reportBaseUrl = '/api/v1/devices/report'
-const reportDeviceName = 'AF-EX01'
+const defaultDeviceSetting: DeviceSetting = {
+  dev_eui: '421414b5397bffb1',
+  device_name: 'CORIOT_DS18_01',
+}
 const dashboardTimeZone = 'America/Bogota'
 const currentMonth = new Date().getMonth() + 1
 const reportYears: ReportYear[] = [2024, 2025, 2026, 2027]
@@ -149,6 +157,8 @@ const emptyFields: LatestUplink['fields'] = {
   temp6: 0,
 }
 
+const deviceSettingQueryKey = ['dashboard-device-setting']
+
 function formatAdjustedTimestamp(value: string) {
   return new Intl.DateTimeFormat('es-ES', {
     timeZone: dashboardTimeZone,
@@ -171,8 +181,38 @@ function formatChartTimestamp(value: string, range: RangeKey) {
   }).format(new Date(value))
 }
 
-async function fetchLatestUplink(): Promise<LatestUplink> {
-  const response = await fetch(latestUrl)
+async function fetchDeviceSetting(): Promise<DeviceSetting> {
+  const response = await fetch('/api/v1/settings/device')
+
+  if (!response.ok) {
+    throw new Error(`No se pudo leer la configuracion del dispositivo (${response.status})`)
+  }
+
+  return response.json()
+}
+
+async function updateDeviceSetting(payload: DeviceSetting, adminToken: string): Promise<DeviceSetting> {
+  const response = await fetch('/api/v1/settings/device', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('El token no tiene permisos para cambiar la configuracion')
+    }
+    throw new Error(`No se pudo guardar la configuracion (${response.status})`)
+  }
+
+  return response.json()
+}
+
+async function fetchLatestUplink(devEui: string): Promise<LatestUplink> {
+  const response = await fetch(`/api/v1/devices/by-dev-eui/${encodeURIComponent(devEui)}/uplinks/latest`)
 
   if (!response.ok) {
     throw new Error(`No se pudo leer el endpoint (${response.status})`)
@@ -181,14 +221,16 @@ async function fetchLatestUplink(): Promise<LatestUplink> {
   return response.json()
 }
 
-async function fetchHistoricalUplinks(range: RangeKey): Promise<HistoricalUplinksResponse> {
+async function fetchHistoricalUplinks(devEui: string, range: RangeKey): Promise<HistoricalUplinksResponse> {
   const selectedRange = ranges.find((item) => item.key === range) ?? ranges[0]
   const params = new URLSearchParams({
     start: selectedRange.start,
     stop: 'now()',
     limit: String(selectedRange.limit),
   })
-  const response = await fetch(`/api/v1/devices/AF-EX01/uplinks?${params.toString()}`)
+  const response = await fetch(
+    `/api/v1/devices/by-dev-eui/${encodeURIComponent(devEui)}/uplinks?${params.toString()}`,
+  )
 
   if (!response.ok) {
     throw new Error(`No se pudo leer el historico (${response.status})`)
@@ -219,7 +261,7 @@ function extractFilename(response: Response, year: number, month: number) {
     return decodeURIComponent(filenameMatch[1].replace(/"/g, '').trim())
   }
 
-  return `reporte_${reportDeviceName}_${year}_${String(month).padStart(2, '0')}.xlsx`
+  return `reporte_dispositivo_${year}_${String(month).padStart(2, '0')}.xlsx`
 }
 
 function SensorGauge({
@@ -282,6 +324,7 @@ function SensorGauge({
 }
 
 function App() {
+  const queryClient = useQueryClient()
   const [range, setRange] = useState<RangeKey>('1h')
   const [reportMonth, setReportMonth] = useState(currentMonth)
   const [reportYear, setReportYear] = useState<ReportYear>(2026)
@@ -293,16 +336,38 @@ function App() {
   const [alertMaxTemperature, setAlertMaxTemperature] = useState('120')
   const [alertChannel, setAlertChannel] = useState<AlertChannel>('email')
   const [alertDestination, setAlertDestination] = useState('')
+  const [mobileNavSection, setMobileNavSection] = useState('overview')
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [settingDevEui, setSettingDevEui] = useState(defaultDeviceSetting.dev_eui)
+  const [settingDeviceName, setSettingDeviceName] = useState(defaultDeviceSetting.device_name)
+  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('dashboardAdminToken') ?? '')
+  const [isSavingDeviceSetting, setIsSavingDeviceSetting] = useState(false)
+  const [deviceSettingError, setDeviceSettingError] = useState<string | null>(null)
+  const { data: deviceSettingData, isError: isDeviceSettingError, error: deviceSettingQueryError } = useQuery({
+    queryKey: deviceSettingQueryKey,
+    queryFn: fetchDeviceSetting,
+    placeholderData: defaultDeviceSetting,
+    staleTime: Infinity,
+  })
+  const deviceSetting = deviceSettingData ?? defaultDeviceSetting
+  const configuredDevEui = deviceSetting.dev_eui
+  const reportDeviceName = deviceSetting.device_name
+
+  useEffect(() => {
+    setSettingDevEui(deviceSetting.dev_eui)
+    setSettingDeviceName(deviceSetting.device_name)
+  }, [deviceSetting.dev_eui, deviceSetting.device_name])
+
   const {
     data,
     isPending,
     isError,
     error,
-    refetch,
     isFetching,
   } = useQuery({
-    queryKey: ['latest-uplink', 'AF-EX01'],
-    queryFn: fetchLatestUplink,
+    queryKey: ['latest-uplink', configuredDevEui],
+    queryFn: () => fetchLatestUplink(configuredDevEui),
+    enabled: Boolean(configuredDevEui),
     refetchInterval: 5 * 60 * 1000,
   })
   const {
@@ -310,8 +375,9 @@ function App() {
     isError: isHistoryError,
     error: historyError,
   } = useQuery({
-    queryKey: ['historical-uplinks', 'AF-EX01', range],
-    queryFn: () => fetchHistoricalUplinks(range),
+    queryKey: ['historical-uplinks', configuredDevEui, range],
+    queryFn: () => fetchHistoricalUplinks(configuredDevEui, range),
+    enabled: Boolean(configuredDevEui),
     refetchInterval: 5 * 60 * 1000,
   })
 
@@ -321,7 +387,7 @@ function App() {
     () =>
       sensorConfig.map((sensor) => ({
         ...sensor,
-        value: liveFields[sensor.key],
+        value: Number(liveFields[sensor.key] ?? 0),
       })),
     [liveFields],
   )
@@ -370,6 +436,32 @@ function App() {
     }
   }
 
+  async function handleDeviceSettingSave() {
+    setDeviceSettingError(null)
+
+    if (!adminToken.trim()) {
+      setDeviceSettingError('Ingresa un token de administrador para guardar la configuracion')
+      return
+    }
+
+    try {
+      setIsSavingDeviceSetting(true)
+      const savedSetting = await updateDeviceSetting(
+        { dev_eui: settingDevEui.trim().toLowerCase(), device_name: settingDeviceName.trim() },
+        adminToken.trim(),
+      )
+      sessionStorage.setItem('dashboardAdminToken', adminToken.trim())
+      queryClient.setQueryData(deviceSettingQueryKey, savedSetting)
+      await queryClient.invalidateQueries({ queryKey: ['latest-uplink'] })
+      await queryClient.invalidateQueries({ queryKey: ['historical-uplinks'] })
+      setIsSettingsModalOpen(false)
+    } catch (saveError) {
+      setDeviceSettingError(saveError instanceof Error ? saveError.message : 'No se pudo guardar la configuracion')
+    } finally {
+      setIsSavingDeviceSetting(false)
+    }
+  }
+
   function toggleSensorVisibility(sensorKey: SensorKey) {
     setVisibleSensors((currentSensors) =>
       currentSensors.includes(sensorKey)
@@ -413,13 +505,70 @@ function App() {
             <Bell size={18} />
             Alertas
           </button>
-          <a href="#settings">
+          <button
+            className="nav-link-button"
+            type="button"
+            onClick={() => {
+              setDeviceSettingError(null)
+              setIsSettingsModalOpen(true)
+            }}
+          >
             <Settings size={18} />
             Ajustes
-          </a>
+          </button>
         </nav>
 
       </aside>
+
+      <nav className="mobile-bottom-nav" aria-label="Navegacion movil">
+        <a
+          className={`mobile-nav-item ${mobileNavSection === 'overview' ? 'active' : ''}`}
+          href="#overview"
+          onClick={() => setMobileNavSection('overview')}
+        >
+          <Activity size={18} />
+          <span>Ambiente</span>
+        </a>
+        <a
+          className={`mobile-nav-item ${mobileNavSection === 'devices' ? 'active' : ''}`}
+          href="#devices"
+          onClick={() => setMobileNavSection('devices')}
+        >
+          <Thermometer size={18} />
+          <span>Sensores</span>
+        </a>
+        <a
+          className={`mobile-nav-item ${mobileNavSection === 'gateways' ? 'active' : ''}`}
+          href="#gateways"
+          onClick={() => setMobileNavSection('gateways')}
+        >
+          <ChartNoAxesCombined size={18} />
+          <span>Histórico</span>
+        </a>
+        <button
+          className={`mobile-nav-item ${isAlertModalOpen ? 'active' : ''}`}
+          type="button"
+          onClick={() => {
+            setMobileNavSection('alerts')
+            setIsAlertModalOpen(true)
+          }}
+        >
+          <Bell size={18} />
+          <span>Alertas</span>
+        </button>
+        <button
+          className={`mobile-nav-item ${isSettingsModalOpen ? 'active' : ''}`}
+          type="button"
+          onClick={() => {
+            setMobileNavSection('settings')
+            setDeviceSettingError(null)
+            setIsSettingsModalOpen(true)
+          }}
+        >
+          <Settings size={18} />
+          <span>Ajustes</span>
+        </button>
+      </nav>
 
       {isAlertModalOpen ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setIsAlertModalOpen(false)}>
@@ -532,21 +681,93 @@ function App() {
         </div>
       ) : null}
 
-      <main className="main-panel">
+      {isSettingsModalOpen ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setIsSettingsModalOpen(false)}>
+          <section
+            className="alert-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="alert-modal-header">
+              <div>
+                <p className="eyebrow">Ajustes</p>
+                <h2 id="settings-modal-title">Dispositivo del dashboard</h2>
+              </div>
+              <button
+                className="icon-button modal-close-button"
+                type="button"
+                aria-label="Cerrar configuracion del dispositivo"
+                onClick={() => setIsSettingsModalOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="alert-form-grid">
+              <label className="alert-field">
+                <span>DevEUI</span>
+                <input
+                  value={settingDevEui}
+                  onChange={(event) => setSettingDevEui(event.target.value)}
+                  placeholder="421414b5397bffb1"
+                  maxLength={16}
+                  spellCheck={false}
+                />
+              </label>
+
+              <label className="alert-field">
+                <span>Nombre del dispositivo</span>
+                <input
+                  value={settingDeviceName}
+                  onChange={(event) => setSettingDeviceName(event.target.value)}
+                  placeholder="CORIOT_DS18_01"
+                />
+              </label>
+
+              <label className="alert-field">
+                <span>Token de administrador</span>
+                <input
+                  type="password"
+                  value={adminToken}
+                  onChange={(event) => setAdminToken(event.target.value)}
+                  placeholder="Bearer token"
+                  autoComplete="off"
+                />
+              </label>
+            </div>
+
+            {deviceSettingError ? <small className="form-error">{deviceSettingError}</small> : null}
+
+            <div className="alert-modal-actions">
+              <button
+                className="sync-button"
+                type="button"
+                onClick={() => void handleDeviceSettingSave()}
+                disabled={isSavingDeviceSetting}
+              >
+                {isSavingDeviceSetting ? <RefreshCw size={16} className="spin" /> : <Settings size={16} />}
+                {isSavingDeviceSetting ? 'Guardando...' : 'Guardar dispositivo'}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      <main className="main-panel" id="overview">
         <header className="topbar">
           <button className="icon-button menu-button" type="button" aria-label="Abrir menu">
             <Menu size={20} />
           </button>
-          <div>
+          <div className="topbar-info">
             <div className="title-logo-wrap" aria-hidden="true">
               <img className="title-logo" src={coriotlabLogo} alt="" />
             </div>
             <h1>Condiciones ambientales</h1>
             <p className="topbar-meta">
-              Dispositivo {data?.device_name ?? 'AF-EX01'} {isFetching ? '· sincronizando' : ''}
+              Dispositivo {data?.device_name ?? deviceSetting.device_name} · {configuredDevEui} {isFetching ? '· sincronizando' : ''}
             </p>
-          </div>
-          <div className="topbar-actions">
             <div className="report-controls" aria-label="Descarga de reporte mensual">
               <label className="report-select">
                 <span>Mes</span>
@@ -592,11 +813,6 @@ function App() {
                 {isDownloadingReport ? 'Generando reporte...' : 'Descargar reporte'}
               </button>
             </div>
-
-            <button className="sync-button secondary-button" type="button" onClick={() => void refetch()}>
-              <RefreshCw size={16} />
-              Sincronizar
-            </button>
           </div>
         </header>
 
@@ -607,6 +823,13 @@ function App() {
           </section>
         ) : null}
 
+        {isDeviceSettingError ? (
+          <section className="panel status-panel">
+            <strong>No pude leer la configuracion del dispositivo.</strong>
+            <small>{deviceSettingQueryError instanceof Error ? deviceSettingQueryError.message : 'Error desconocido'}</small>
+          </section>
+        ) : null}
+
         {isHistoryError ? (
           <section className="panel status-panel">
             <strong>No pude leer el historico del dispositivo.</strong>
@@ -614,7 +837,7 @@ function App() {
           </section>
         ) : null}
 
-        <section className="gauges-grid" aria-label="Lecturas actuales de sensores" id="overview">
+        <section className="gauges-grid" aria-label="Lecturas actuales de sensores" id="devices">
           {sensors.map((sensor) => (
             <SensorGauge sensor={sensor} updatedAt={updatedAt} key={sensor.key} />
           ))}
